@@ -1,73 +1,92 @@
-local Lobbys = {}
-local PlayersLobby = {}
-local LobbyModule = require(game:GetService('ReplicatedStorage'):WaitForChild('Lobby'))
-local LobbyRemote = game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote')
-local PlayersOccupation = {}
+local Lobby = {}
+Lobby.__index = Lobby
 
-
-local function GenerateLobbyID()
-	return tostring(os.time()) .. math.random(1000, 9999)
+function Lobby.Create(Settings)
+	local self = setmetatable(Lobby, {})
+	
+	self.Players = {}
+	self.Leader = nil
+	self.Type = Settings.Type or 'Public'
+	self.Chapter = Settings.Chapter or 'Chapter 1'
+	self.Name = Settings.Name or 'Party'
+	self.MaxPlayers = Settings.MaxPlayers or 4
+	self.ID = Settings.ID
+	
+	return self
 end
 
-function CreateLobby(Player, MaxPlayerAmount, PartyType, PartyName, ExtraInfo)
-	print(MaxPlayerAmount, PartyType, PartyName)
-	
-	local LobbyID = GenerateLobbyID()
-	
-	Lobbys[LobbyID] = LobbyModule.Create({
-		MaxPlayers = MaxPlayerAmount,
-		Type = PartyType,
-		Name = PartyName,
-		ID = LobbyID
-	})
+function Lobby:SetLeader(Leader: Player)
+	self.Leader = Leader
+end
+
+function Lobby:Disband()
+	game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireAllClients('Disband', self)
 	
 	task.wait()
 	
-	local Template = game:GetService('ReplicatedStorage').PartyTemplate
-	Template.Name = LobbyID
+	for i,v in pairs(self) do
+		i = nil
+		v = nil
+	end
 	
-	Template.PartyName.Text = PartyName
-	Template.PlayerAmount.Text = #Lobbys[LobbyID].Players .. "/" .. MaxPlayerAmount
-	Template.Parent = Player.PlayerGui.Frame.Background['Multi-Player'].Frame.Parties
-	Template.Visible = true
-
-	Lobbys[LobbyID]:SetLeader(Player)
-	Lobbys[LobbyID]:Add(Player)
-	
-	PlayersOccupation[Player.Name] = LobbyID
-	
-	return Lobbys[LobbyID]
+	return
 end
 
-LobbyRemote.OnServerEvent:Connect(function(Player: any, Argument: string, MaxPlayerAmount: number, PartyType, PartyName, ExtraInfo)
-	if Argument == 'Create' then
-		CreateLobby(Player, MaxPlayerAmount, PartyType, PartyName, ExtraInfo)
-		
-	elseif Argument == 'Join' then
-		Lobbys[ExtraInfo]:Add(Player, ExtraInfo)
-		PlayersOccupation[Player.Name] = ExtraInfo
-		
-	elseif Argument == 'Leave' then
-		Lobbys[ExtraInfo]:Leave(Player, ExtraInfo)
-		PlayersOccupation[Player.Name] = false
-		
-	elseif Argument == 'Disband' then
-		local ID = PlayersOccupation[Player.Name]
+function Lobby:Add(Player: any)
+	local AmountOfPlayers = self.MaxPlayers
+	local AvailablePlayers = #self.Players
+	
+	if AmountOfPlayers <= AvailablePlayers then
+		return
+	end
+	
+	if self.Type == 'Public' then
+		if table.find(self.Players, Player.Name) then
+			return error('Player already in party')
+		else
+			table.insert(self.Players, Player.Name)
+			game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireClient(Player, 'Join', self.ID, {['Name'] = self.Name, ['Leader'] = self.Leader})
+			game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireAllClients(Player, 'Update', self.ID)
+			
+			print('Player has joined party')
+		end
+	elseif self.Type == 'Friends' then
+		if not (Player == self.Leader) then
+			if not self.Leader:IsFriendsWith(Player) then
+				return warn('Player is not friends with Leader')
+			end
+		end
 
-		Lobbys[ID]:Disband()
-		for i,v in pairs(Lobbys) do
-			print('Index' .. i .. 'Variable' .. v)
+		if table.find(self.Players, Player.Name) then
+			return error('Player already in party')
+		else
+			table.insert(self.Players, Player.Name)
+			game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireClient(Player, 'Join', self.ID, {['Name'] = self.Name, ['Leader'] = self.Leader})
+			game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireAllClients(Player, 'Update', self.ID, {['Players'] = self.Players, ['MaxPlayers'] = self.MaxPlayers})
+			
+			print('Joined party')
 		end
 	end
+
+end
+
+function Lobby:Leave(Player: any)
+	if Player == self.Leader then
+		return error('Leader cant leave own party')
+	end
 	
-end)
-
-
-game:GetService('ReplicatedStorage'):WaitForChild('GrabParty').OnServerInvoke = function(Player, ID)
-	local Lobby = Lobbys[ID]
-	if Lobby then
-		print(Lobby)
+	if table.find(self.Players, Player.Name) then
+		for i,v in pairs(self.Players) do
+			if v.Name == Player.Name then
+				table.remove(self.Players, Player.Name)
+			end
+		end
+		
+		game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireClient(Player, 'Join', self.ID, {['Name'] = self.Name, ['Leader'] = self.Leader})
+		game:GetService('ReplicatedStorage'):WaitForChild('LobbyRemote'):FireAllClients(Player, 'Update', self.ID, {['Players'] = self.Players, ['MaxPlayers'] = self.MaxPlayers})
 	else
-		print('Failed to get table')
+		return false
 	end
 end
+
+return Lobby
